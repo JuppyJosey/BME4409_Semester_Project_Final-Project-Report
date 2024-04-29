@@ -1,0 +1,132 @@
+import numpy as np
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+from numpy.polynomial.polynomial import Polynomial
+import pandas as pd
+
+# Constants for the enolase reaction
+Vmax_enolase = 65.36 / 60  # converting mM/min to mM/s
+Km_enolase = 1.52  # mM
+ECF_impermeable_solute_concentration = 306  # milliosmoles/L
+initial_cell_volume = 87e-15  # L
+initial_ECF_water_concentration = 55.5e3 * 0.93  # M
+
+# Constants for blood viscosity
+baseline_viscosity = 1.3  # cP (centipoise)
+viscosity_sensitivity = 0.5  # Sensitivity coefficient
+stroke_threshold_ischemic = 24.2 + 4.9  # Upper bound of the range for ischemic stroke
+
+# Glycolysis system definition
+def glycolysis_system(t, y, Vmax_enolase, Km_enolase, initial_cell_volume, cell_water_molarity_to_volume_conversion):
+    _2PG, PEP, cell_water, cell_volume = y
+    forward_reaction_rate = Vmax_enolase * _2PG / (Km_enolase + _2PG)
+    backward_reaction_rate = Vmax_enolase * PEP / (Km_enolase + PEP)
+    net_reaction_rate = forward_reaction_rate - backward_reaction_rate
+    d2PG_dt = -net_reaction_rate
+    dPEP_dt = net_reaction_rate
+    dCellWater_dt = net_reaction_rate
+    dCellVolume_dt = dCellWater_dt * cell_water_molarity_to_volume_conversion
+    return [d2PG_dt, dPEP_dt, dCellWater_dt, dCellVolume_dt]
+
+# Calculate blood viscosity
+def calculate_blood_viscosity(initial_plasma_volume, current_plasma_volume):
+    volume_change = (current_plasma_volume - initial_plasma_volume) / initial_plasma_volume
+    viscosity_change = volume_change * viscosity_sensitivity
+    current_viscosity = baseline_viscosity + (baseline_viscosity * viscosity_change)
+    return current_viscosity
+
+# CSV Export function
+def export_to_csv(solution, filename="/content/CSV/simulation_data.csv"):
+    data = {'Time (s)': solution.t,
+            '2-PG (mM)': solution.y[0],
+            'PEP (mM)': solution.y[1],
+            'Cell Water (mM)': solution.y[2],
+            'Cell Volume (L)': solution.y[3]}
+    df = pd.DataFrame(data)
+    df.to_csv(filename, index=False)
+    print(f"Data exported to {filename}")
+
+# Plot results and linear regression fit
+def plot_results(solution, initial_plasma_volume, plasma_volumes):
+    final_plasma_volume = plasma_volumes[-1]
+    estimated_blood_viscosity = calculate_blood_viscosity(initial_plasma_volume, final_plasma_volume)
+    risk_message = "No immediate concern for stroke based on blood viscosity."
+    if estimated_blood_viscosity > stroke_threshold_ischemic:
+        risk_message = "Warning: High blood viscosity. Increased risk of stroke."
+
+    fig, axs = plt.subplots(2, 2, figsize=(12, 10))
+    equations_text = []  # List to store the equations as text
+
+    titles = ['2-PG Concentration over Time', 'PEP Concentration over Time',
+              'Cell Water Concentration over Time', 'Cell Volume over Time']
+    labels = ['2-PG (mM)', 'PEP (mM)', 'Cell Water (mM)', 'Cell Volume (L)']
+
+    for i, ax in enumerate(axs.flat):
+        ax.plot(solution.t, solution.y[i], label=labels[i])
+
+        # Fit a higher-degree polynomial and plot it
+        coefs = np.polyfit(solution.t, solution.y[i], 5)  # Fitting a 5th-degree polynomial
+        p = np.poly1d(coefs)
+        t_linspace = np.linspace(solution.t[0], solution.t[-1], 500)
+        ax.plot(t_linspace, p(t_linspace), label='Polynomial Fit (deg 5)', linestyle='--')
+
+        ax.set_title(titles[i])
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(labels[i])
+        ax.legend()
+
+        # Format polynomial coefficients to a more readable form
+        equation_text = f'{labels[i]} Fit:\n' + ' + '.join([f'{coef:.2e} * t^{deg}' for deg, coef in enumerate(coefs[::-1])]).replace('* t^0', '').replace(' + -', ' - ')
+        equations_text.append(equation_text)
+
+    plt.tight_layout(pad=3.0)
+    plt.show()
+
+    # Create a new figure for polynomial equations
+    fig2, ax2 = plt.subplots(figsize=(10, 4))
+    plt.axis('off')
+    ax2.set_xlim(0, 1)
+    ax2.set_ylim(0, 1)
+    ax2.patch.set_facecolor('lightgrey')  # Set the background color for the figure
+
+    # Create text boxes for each equation
+    for i, text in enumerate(equations_text):
+        ax2.text(0.5, 1-(i+1)*0.2, text, ha='center', va='center', fontsize=10, bbox=dict(boxstyle="round", ec=(1., 0.5, 0.5), fc=(1., 0.8, 0.8)))
+
+    plt.show()
+
+global_solution = None
+
+# Function to run the simulation
+def run_simulation(b=None):
+    # Get the input values from the sliders
+    initial_2PG = initial_2PG_slider.value
+    initial_PEP = initial_PEP_slider.value
+    initial_cell_water = initial_cell_water_slider.value
+
+    # Set up the simulation parameters
+    cell_water_molarity_to_volume_conversion = initial_cell_volume / initial_cell_water
+    initial_conditions = [initial_2PG, initial_PEP, initial_cell_water, initial_cell_volume]
+    t_span = (0, 86400)  # seconds
+    t_eval = np.linspace(*t_span, 86400)
+
+    # Run the simulation
+    solution = solve_ivp(glycolysis_system, t_span, initial_conditions,
+                         args=(Vmax_enolase, Km_enolase, initial_cell_volume, cell_water_molarity_to_volume_conversion),
+                         t_eval=t_eval)
+
+    # Plot the results
+    plot_results(solution, initial_cell_water, solution.y[2])
+
+# Widgets for input parameters
+initial_2PG_slider = widgets.FloatSlider(value=500, min=0, max=10000, step=10, description='Initial 2-PG (mM):')
+initial_PEP_slider = widgets.FloatSlider(value=0, min=0, max=10000, step=10, description='Initial PEP (mM):')
+initial_cell_water_slider = widgets.FloatSlider(value=initial_ECF_water_concentration, min=0, max=55000, step=10, description='Initial Cell Water (mM):')
+
+# Button to run the simulation
+run_button = widgets.Button(description='Run Simulation')
+run_button.on_click(run_simulation)
+
+# Display the widgets
+display(widgets.VBox([initial_2PG_slider, initial_PEP_slider, initial_cell_water_slider, run_button]))

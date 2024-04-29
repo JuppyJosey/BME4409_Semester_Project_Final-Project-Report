@@ -1,0 +1,46 @@
+# Function to run the simulation and export results to CSV
+def run_simulation_and_export(initial_2PG, initial_PEP, initial_cell_water, filename="simulation_data.csv"):
+    cell_water_molarity_to_volume_conversion = initial_cell_volume / initial_cell_water
+    initial_conditions = [initial_2PG, initial_PEP, initial_cell_water, initial_cell_volume]
+    t_span = (0, 86400)  # Define the time span of the simulation
+    t_eval = np.linspace(*t_span, 86400)  # Define the time points at which to store the results
+
+    # Run the simulation
+    solution = solve_ivp(glycolysis_system, t_span, initial_conditions,
+                         args=(Vmax_enolase, Km_enolase, initial_cell_volume, cell_water_molarity_to_volume_conversion),
+                         t_eval=t_eval)
+
+    # Export the results to a CSV file
+    data = {
+        'Time (s)': solution.t,
+        '2-PG (mM)': solution.y[0],
+        'PEP (mM)': solution.y[1],
+        'Cell Water (mM)': solution.y[2],
+        'Cell Volume (L)': solution.y[3]
+    }
+    df = pd.DataFrame(data)
+    df.to_csv(filename, index=False)
+    print(f"Data exported to {filename}")
+
+# Widgets for input parameters
+initial_2PG_widget = widgets.FloatText(value=500, description='Initial 2-PG (mM):')
+initial_PEP_widget = widgets.FloatText(value=0, description='Initial PEP (mM):')
+initial_cell_water_widget = widgets.FloatText(value=initial_ECF_water_concentration, description='Initial Cell Water (mM):')
+
+# Button to run simulation and export CSV
+export_button = widgets.Button(description="Run and Export CSV")
+
+# Button click event handler
+def on_export_button_clicked(b):
+    # Get the input values from the widgets
+    initial_2PG = initial_2PG_widget.value
+    initial_PEP = initial_PEP_widget.value
+    initial_cell_water = initial_cell_water_widget.value
+
+    # Call the function to run the simulation and export the results
+    run_simulation_and_export(initial_2PG, initial_PEP, initial_cell_water)
+
+export_button.on_click(on_export_button_clicked)
+
+# Display the widgets and the button
+widgets.VBox([initial_2PG_widget, initial_PEP_widget, initial_cell_water_widget, export_button])
